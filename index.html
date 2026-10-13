@@ -374,7 +374,10 @@
     const STORAGE_KEY = 'runtracker_runs_v1';
     const GPS_INTERVAL_MS = 500;
     const MAX_REASONABLE_SPEED_MPS = 8.5; // 2:00 min/km; filtert extreme GPS-sprongen.
-    const MIN_ACCURACY_M = 50;
+    const MAX_ACCURACY_M = 35; // Punten slechter dan dit worden genegeerd zodra er al een GPS-fix is.
+    const MIN_SAMPLE_INTERVAL_MS = 250; // Voorkomt dubbele callbacks van watchPosition + polling.
+    const GPS_SMOOTHING_SECONDS = 2.8; // Hoe hoger, hoe minder zigzag/arm- en GPS-ruis meetelt.
+    const MIN_MOVEMENT_M = 0.65; // Kleinere bewegingen worden gezien als ruis, niet als afgelegde afstand.
 
     const els = {
       app: document.getElementById('app'), gpsPill: document.getElementById('gpsPill'), setupCard: document.getElementById('setupCard'),
@@ -404,7 +407,11 @@
       activeMsBeforePause: 0,
       pauseStarted: null,
       lastPoint: null,
+      lastRawWall: 0,
+      smoothedPoint: null,
       points: [],
+      rawPoints: [],
+      rejectedSamples: 0,
       distanceM: 0,
       targetKm: null,
       manualTarget: false,
@@ -417,7 +424,11 @@
       run.activeMsBeforePause = 0;
       run.pauseStarted = null;
       run.lastPoint = null;
+      run.lastRawWall = 0;
+      run.smoothedPoint = null;
       run.points = [];
+      run.rawPoints = [];
+      run.rejectedSamples = 0;
       run.distanceM = 0;
       run.targetKm = null;
       run.manualTarget = false;
@@ -527,6 +538,8 @@
       run.startWall = Date.now();
       run.pauseStarted = null;
       run.lastPoint = null;
+      run.lastRawWall = 0;
+      run.smoothedPoint = null;
       state = 'running';
       startGps();
       renderControls();
@@ -569,16 +582,35 @@
       if (state !== 'running') return;
       const c = pos.coords;
       if (!Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) return;
+
+      const wall = Date.now();
+      if (wall - run.lastRawWall < MIN_SAMPLE_INTERVAL_MS) return;
+      run.lastRawWall = wall;
+
       const accuracy = c.accuracy ?? 999;
-      updateGpsPill(`GPS ±${Math.round(accuracy)}m`, accuracy <= 20);
-      if (accuracy > MIN_ACCURACY_M && run.points.length > 0) return;
+      updateGpsPill(`GPS ±${Math.round(accuracy)}m`, accuracy <= 12);
+      if (accuracy > MAX_ACCURACY_M && run.points.length > 0) {
+        run.rejectedSamples += 1;
+        render();
+        return;
+      }
 
       const nowMs = activeMs();
+      const rawPoint = { lat: c.latitude, lon: c.longitude, t: nowMs, wall, accuracy };
+      run.rawPoints.push(rawPoint);
+
+      const filtered = filterGpsPoint(rawPoint);
+      if (!filtered) {
+        run.rejectedSamples += 1;
+        render();
+        return;
+      }
+
       const point = {
-        lat: c.latitude,
-        lon: c.longitude,
+        lat: filtered.lat,
+        lon: filtered.lon,
         t: nowMs,
-        wall: Date.now(),
+        wall,
         accuracy,
         cumulativeM: run.distanceM
       };
@@ -587,17 +619,69 @@
         const dt = Math.max(0.001, (nowMs - run.lastPoint.t) / 1000);
         const d = haversine(run.lastPoint, point);
         const speed = d / dt;
-        if (d >= 0.4 && speed <= MAX_REASONABLE_SPEED_MPS) {
-          run.distanceM += d;
+        const dynamicNoiseM = Math.max(MIN_MOVEMENT_M, Math.min(2.2, accuracy * 0.08));
+
+        if (d < dynamicNoiseM) {
+          run.lastPoint = { ...point, cumulativeM: run.distanceM };
+          return;
+        }
+
+        if (speed <= MAX_REASONABLE_SPEED_MPS) {
+          const distanceCorrection = distanceReliabilityFactor(accuracy, d);
+          run.distanceM += d * distanceCorrection;
           point.cumulativeM = run.distanceM;
           run.points.push(point);
           updateKmMarks();
+        } else {
+          run.rejectedSamples += 1;
         }
       } else {
+        point.cumulativeM = 0;
         run.points.push(point);
       }
       run.lastPoint = point;
       render();
+    }
+
+    function filterGpsPoint(rawPoint) {
+      if (!run.smoothedPoint) {
+        run.smoothedPoint = { lat: rawPoint.lat, lon: rawPoint.lon, t: rawPoint.t, accuracy: rawPoint.accuracy };
+        return run.smoothedPoint;
+      }
+
+      const dt = Math.max(0.001, (rawPoint.t - run.smoothedPoint.t) / 1000);
+      const rawJumpM = haversine(run.smoothedPoint, rawPoint);
+      const rawSpeed = rawJumpM / dt;
+
+      // Extreem onwaarschijnlijke sprongen zijn GPS-ruis en worden niet meegenomen.
+      if (rawSpeed > MAX_REASONABLE_SPEED_MPS * 1.6 && rawJumpM > Math.max(12, rawPoint.accuracy * 1.6)) {
+        return null;
+      }
+
+      // Adaptieve low-pass filter: bij slechter GPS-signaal krijgt een nieuw punt minder gewicht.
+      // Hierdoor telt zigzag door armbeweging en GPS-wobble veel minder mee als echte afstand.
+      const accuracyPenalty = Math.min(0.75, Math.max(0, (rawPoint.accuracy - 5) / 40));
+      const alphaBase = 1 - Math.exp(-dt / GPS_SMOOTHING_SECONDS);
+      const alpha = Math.max(0.08, Math.min(0.55, alphaBase * (1 - accuracyPenalty)));
+
+      run.smoothedPoint = {
+        lat: run.smoothedPoint.lat + (rawPoint.lat - run.smoothedPoint.lat) * alpha,
+        lon: run.smoothedPoint.lon + (rawPoint.lon - run.smoothedPoint.lon) * alpha,
+        t: rawPoint.t,
+        accuracy: rawPoint.accuracy
+      };
+      return run.smoothedPoint;
+    }
+
+    function distanceReliabilityFactor(accuracy, segmentM) {
+      // GPS met ±7m kan korte segmenten sterk overschatten. Deze factor dempt vooral korte
+      // segmenten bij matige nauwkeurigheid, maar laat langere consistente beweging grotendeels staan.
+      const noiseRatio = accuracy / Math.max(segmentM, 1);
+      if (accuracy <= 6) return 1;
+      if (noiseRatio >= 8) return 0.15;
+      if (noiseRatio >= 4) return 0.35;
+      if (noiseRatio >= 2) return 0.60;
+      return Math.max(0.75, Math.min(1, 1 - (accuracy - 6) / 80));
     }
 
     function updateKmMarks() {

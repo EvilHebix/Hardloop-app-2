@@ -1,4 +1,4 @@
-const CACHE_NAME = 'runtracker-v1';
+const CACHE_NAME = 'runtracker-v2';
 const ASSETS = [
   './',
   './index.html',
