@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#101827" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RunTracker" />
+  <title>RunTracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #111c31;
+      --card-2: #17243d;
+      --text: #f7fafc;
+      --muted: #9fb0c8;
+      --accent: #45d483;
+      --accent-2: #60a5fa;
+      --danger: #fb7185;
+      --warn: #fbbf24;
+      --line: rgba(255,255,255,.10);
+      --shadow: 0 18px 50px rgba(0,0,0,.35);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 20% 0%, #183056 0, var(--bg) 42%, #070b13 100%);
+      color: var(--text);
+      overscroll-behavior: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, label { font: inherit; }
+    button { border: 0; cursor: pointer; color: inherit; }
+    input {
+      width: 100%;
+      padding: 15px 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      outline: none;
+    }
+    input::placeholder { color: #6f819b; }
+
+    .app {
+      min-height: 100%;
+      display: grid;
+      grid-template-columns: 100vw 100vw;
+      transform: translateX(0);
+      transition: transform .25s ease;
+      touch-action: pan-y;
+    }
+    .app.history-open { transform: translateX(-100vw); }
+
+    .screen {
+      min-height: 100vh;
+      padding: calc(16px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    h1, h2, h3 { margin: 0; }
+    h1 { font-size: 24px; letter-spacing: -.03em; }
+    h2 { font-size: 20px; letter-spacing: -.02em; }
+    h3 { font-size: 15px; color: var(--muted); font-weight: 700; }
+
+    .pill {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+      margin-bottom: 14px;
+      backdrop-filter: blur(12px);
+    }
+
+    .setup { display: block; }
+    .setup.hidden { display: none; }
+    .hint { color: var(--muted); line-height: 1.35; font-size: 14px; margin: 10px 0 0; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .metric {
+      background: rgba(0,0,0,.18);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      min-height: 96px;
+    }
+    .metric.wide { grid-column: 1 / -1; }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 800;
+      margin-bottom: 7px;
+    }
+    .value {
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -.05em;
+    }
+    .unit { color: var(--muted); font-size: 14px; margin-top: 6px; }
+
+    .primary-bar { margin-top: 14px; display: flex; gap: 10px; }
+    .btn {
+      width: 100%;
+      min-height: 58px;
+      border-radius: 18px;
+      font-weight: 900;
+      letter-spacing: -.01em;
+      background: var(--accent);
+      color: #06110b;
+      box-shadow: 0 12px 30px rgba(69,212,131,.22);
+    }
+    .btn.pause { background: var(--warn); color: #1d1300; box-shadow: 0 12px 30px rgba(251,191,36,.18); }
+    .btn.secondary { background: var(--accent-2); color: #06101f; box-shadow: 0 12px 30px rgba(96,165,250,.18); }
+    .btn.danger { background: var(--danger); color: #21040a; box-shadow: 0 12px 30px rgba(251,113,133,.18); }
+    .btn.ghost { background: rgba(255,255,255,.08); color: var(--text); box-shadow: none; border: 1px solid var(--line); }
+
+    .status-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 12px;
+    }
+
+    canvas { width: 100%; height: 220px; display: block; }
+    #minuteChart { height: 210px; }
+    #kmChart, #velocityChart { height: 230px; }
+
+    .save-screen, .detail-screen {
+      position: fixed;
+      inset: 0;
+      display: none;
+      background: var(--bg);
+      z-index: 20;
+      padding: calc(16px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+    }
+    .save-screen.open, .detail-screen.open { display: block; }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 4px;
+      color: var(--text);
+      user-select: none;
+    }
+    .checkbox-row input { width: 22px; height: 22px; accent-color: var(--accent); }
+
+    .history-list { display: grid; gap: 12px; }
+    .run-item {
+      text-align: left;
+      width: 100%;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.06);
+      padding: 14px;
+    }
+    .run-title { font-weight: 900; font-size: 16px; margin-bottom: 8px; }
+    .run-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .empty { color: var(--muted); padding: 20px 4px; line-height: 1.4; }
+
+    .top-actions { display: flex; gap: 10px; align-items: center; }
+    .small-btn {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.08);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    #map {
+      width: 100%;
+      height: 330px;
+      border-radius: 18px;
+      overflow: hidden;
+      background: #0e1728;
+      border: 1px solid var(--line);
+    }
+    .leaflet-container { background: #0e1728; }
+
+    .subtle { color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  </style>
+</head>
+<body>
+  <main id="app" class="app">
+    <section id="runScreen" class="screen">
+      <header>
+        <div>
+          <h1>RunTracker</h1>
+          <div class="subtle">Swipe naar links voor opgeslagen runs</div>
+        </div>
+        <div id="gpsPill" class="pill">GPS wacht...</div>
+      </header>
+
+      <section id="setupCard" class="card setup">
+        <h3>Doelafstand</h3>
+        <input id="targetInput" inputmode="decimal" type="number" step="0.01" min="0" placeholder="Leeg = 2,50 → 5,00 → 10,00 km" />
+        <p class="hint">Laat leeg voor automatische doelprojectie: eerst 2,50 km, daarna 5,00 km en daarna 10,00 km.</p>
+      </section>
+
+      <section class="card">
+        <div class="metrics">
+          <div class="metric wide">
+            <div class="label">Totale afstand</div>
+            <div id="distanceValue" class="value">0,00</div>
+            <div class="unit">km</div>
+          </div>
+          <div class="metric">
+            <div class="label">Tot. gemiddeld</div>
+            <div id="avgPaceValue" class="value">--:--</div>
+            <div class="unit">min/km</div>
+          </div>
+          <div class="metric">
+            <div class="label">Deze km</div>
+            <div id="kmPaceValue" class="value">--:--</div>
+            <div class="unit">min/km</div>
+          </div>
+          <div class="metric">
+            <div class="label">Laatste 5 sec</div>
+            <div id="pace5Value" class="value">--:--</div>
+            <div class="unit">min/km</div>
+          </div>
+          <div class="metric">
+            <div class="label">Tijd</div>
+            <div id="timeValue" class="value">00:00</div>
+            <div class="unit">actieve looptijd</div>
+          </div>
+          <div class="metric wide">
+            <div class="label">Geschatte finishtijd</div>
+            <div id="finishValue" class="value">--:--</div>
+            <div id="finishUnit" class="unit">op basis van totale gemiddelde / deze km</div>
+          </div>
+        </div>
+
+        <div id="controls" class="primary-bar">
+          <button id="mainBtn" class="btn">Start loop</button>
+        </div>
+        <div class="status-line">
+          <span id="stateText">Niet gestart</span>
+          <span id="sampleText">0 gps-punten</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Tempo per minuut-split</h3>
+        <canvas id="minuteChart" width="900" height="440"></canvas>
+      </section>
+    </section>
+
+    <section id="historyScreen" class="screen">
+      <header>
+        <div>
+          <h1>Opgeslagen runs</h1>
+          <div class="subtle">Swipe naar rechts om terug te gaan</div>
+        </div>
+        <button id="backToRunBtn" class="small-btn">Terug</button>
+      </header>
+      <div id="historyList" class="history-list"></div>
+    </section>
+  </main>
+
+  <section id="saveScreen" class="save-screen">
+    <header>
+      <div>
+        <h1>Run opslaan</h1>
+        <div id="saveSummary" class="subtle"></div>
+      </div>
+    </header>
+    <section class="card">
+      <h3>Titel loopje</h3>
+      <input id="runTitleInput" placeholder="Bijv. 10 km rondje" />
+      <label class="checkbox-row">
+        <input id="withDonnaInput" type="checkbox" />
+        <span>Met Donna gelopen</span>
+      </label>
+      <div class="primary-bar">
+        <button id="saveRunBtn" class="btn">Opslaan</button>
+        <button id="discardRunBtn" class="btn ghost">Niet opslaan</button>
+      </div>
+    </section>
+  </section>
+
+  <section id="detailScreen" class="detail-screen">
+    <header>
+      <div>
+        <h1 id="detailTitle">Run details</h1>
+        <div id="detailSub" class="subtle"></div>
+      </div>
+      <button id="closeDetailBtn" class="small-btn">Sluiten</button>
+    </header>
+
+    <section class="card">
+      <div class="metrics">
+        <div class="metric">
+          <div class="label">Afstand</div>
+          <div id="detailDistance" class="value">0,00</div>
+          <div class="unit">km</div>
+        </div>
+        <div class="metric">
+          <div class="label">Gemiddeld</div>
+          <div id="detailAvg" class="value">--:--</div>
+          <div class="unit">min/km</div>
+        </div>
+        <div class="metric wide">
+          <div class="label">Snelste km</div>
+          <div id="detailFastestKm" class="value">--:--</div>
+          <div id="detailFastestKmUnit" class="unit">min/km</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>1 km-splits</h3>
+      <canvas id="kmChart" width="900" height="460"></canvas>
+    </section>
+
+    <section class="card">
+      <h3>v,t-diagram: 5-sec tempo</h3>
+      <canvas id="velocityChart" width="900" height="460"></canvas>
+    </section>
+
+    <section class="card">
+      <h3>Route</h3>
+      <div id="map"></div>
+      <p class="hint">Kaart gebruikt OpenStreetMap via internet. De route zelf wordt lokaal op je telefoon bewaard.</p>
+    </section>
+  </section>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    const STORAGE_KEY = 'runtracker_runs_v1';
+    const GPS_INTERVAL_MS = 500;
+    const MAX_REASONABLE_SPEED_MPS = 8.5; // 2:00 min/km; filtert extreme GPS-sprongen.
+    const MIN_ACCURACY_M = 50;
+
+    const els = {
+      app: document.getElementById('app'), gpsPill: document.getElementById('gpsPill'), setupCard: document.getElementById('setupCard'),
+      targetInput: document.getElementById('targetInput'), distanceValue: document.getElementById('distanceValue'), avgPaceValue: document.getElementById('avgPaceValue'),
+      kmPaceValue: document.getElementById('kmPaceValue'), pace5Value: document.getElementById('pace5Value'), timeValue: document.getElementById('timeValue'),
+      finishValue: document.getElementById('finishValue'), finishUnit: document.getElementById('finishUnit'), controls: document.getElementById('controls'),
+      mainBtn: document.getElementById('mainBtn'), stateText: document.getElementById('stateText'), sampleText: document.getElementById('sampleText'),
+      minuteChart: document.getElementById('minuteChart'), historyList: document.getElementById('historyList'), backToRunBtn: document.getElementById('backToRunBtn'),
+      saveScreen: document.getElementById('saveScreen'), saveSummary: document.getElementById('saveSummary'), runTitleInput: document.getElementById('runTitleInput'),
+      withDonnaInput: document.getElementById('withDonnaInput'), saveRunBtn: document.getElementById('saveRunBtn'), discardRunBtn: document.getElementById('discardRunBtn'),
+      detailScreen: document.getElementById('detailScreen'), detailTitle: document.getElementById('detailTitle'), detailSub: document.getElementById('detailSub'),
+      closeDetailBtn: document.getElementById('closeDetailBtn'), detailDistance: document.getElementById('detailDistance'), detailAvg: document.getElementById('detailAvg'),
+      detailFastestKm: document.getElementById('detailFastestKm'), detailFastestKmUnit: document.getElementById('detailFastestKmUnit'), kmChart: document.getElementById('kmChart'),
+      velocityChart: document.getElementById('velocityChart')
+    };
+
+    let state = 'idle';
+    let watchId = null;
+    let pollId = null;
+    let tickId = null;
+    let map = null;
+    let routeLine = null;
+    let pendingRun = null;
+
+    const run = {
+      startWall: null,
+      activeMsBeforePause: 0,
+      pauseStarted: null,
+      lastPoint: null,
+      points: [],
+      distanceM: 0,
+      targetKm: null,
+      manualTarget: false,
+      minuteSplits: [],
+      kmMarks: [{ km: 0, timeMs: 0, distanceM: 0 }]
+    };
+
+    function resetRun() {
+      run.startWall = null;
+      run.activeMsBeforePause = 0;
+      run.pauseStarted = null;
+      run.lastPoint = null;
+      run.points = [];
+      run.distanceM = 0;
+      run.targetKm = null;
+      run.manualTarget = false;
+      run.minuteSplits = [];
+      run.kmMarks = [{ km: 0, timeMs: 0, distanceM: 0 }];
+    }
+
+    function formatKm(meters) {
+      return (meters / 1000).toFixed(2).replace('.', ',');
+    }
+
+    function formatDuration(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return '--:--';
+      const total = Math.round(ms / 1000);
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function formatPace(secPerKm) {
+      if (!Number.isFinite(secPerKm) || secPerKm <= 0) return '--:--';
+      const mins = Math.floor(secPerKm / 60);
+      const secs = Math.round(secPerKm - mins * 60);
+      if (secs === 60) return `${mins + 1}:00`;
+      return `${mins}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function paceFrom(distanceM, timeMs) {
+      if (distanceM < 5 || timeMs <= 0) return Infinity;
+      return (timeMs / 1000) / (distanceM / 1000);
+    }
+
+    function haversine(a, b) {
+      const R = 6371000;
+      const toRad = x => x * Math.PI / 180;
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lon - a.lon);
+      const lat1 = toRad(a.lat);
+      const lat2 = toRad(b.lat);
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    }
+
+    function activeMs(now = Date.now()) {
+      if (!run.startWall) return 0;
+      if (state === 'paused') return run.activeMsBeforePause;
+      return run.activeMsBeforePause + (now - run.startWall);
+    }
+
+    function parseTargetKm() {
+      const raw = els.targetInput.value.trim().replace(',', '.');
+      const val = Number(raw);
+      if (Number.isFinite(val) && val > 0) return { targetKm: val, manual: true };
+      return { targetKm: nextAutoTargetKm(0), manual: false };
+    }
+
+    function nextAutoTargetKm(distanceKm) {
+      if (distanceKm < 2.5) return 2.5;
+      if (distanceKm < 5) return 5;
+      return 10;
+    }
+
+    function currentTargetKm() {
+      if (run.manualTarget) return run.targetKm;
+      return nextAutoTargetKm(run.distanceM / 1000);
+    }
+
+    function updateGpsPill(text, good = false) {
+      els.gpsPill.textContent = text;
+      els.gpsPill.style.color = good ? '#bfffd6' : '#9fb0c8';
+      els.gpsPill.style.background = good ? 'rgba(69,212,131,.14)' : 'rgba(255,255,255,.08)';
+    }
+
+    function startRun() {
+      if (!('geolocation' in navigator)) {
+        alert('GPS wordt niet ondersteund door deze browser.');
+        return;
+      }
+      resetRun();
+      const t = parseTargetKm();
+      run.targetKm = t.targetKm;
+      run.manualTarget = t.manual;
+      run.startWall = Date.now();
+      state = 'running';
+      els.setupCard.classList.add('hidden');
+      startGps();
+      tickId = setInterval(render, 500);
+      renderControls();
+      render();
+    }
+
+    function pauseRun() {
+      if (state !== 'running') return;
+      run.activeMsBeforePause += Date.now() - run.startWall;
+      run.pauseStarted = Date.now();
+      run.startWall = null;
+      state = 'paused';
+      stopGps();
+      renderControls();
+      render();
+    }
+
+    function resumeRun() {
+      if (state !== 'paused') return;
+      run.startWall = Date.now();
+      run.pauseStarted = null;
+      run.lastPoint = null;
+      state = 'running';
+      startGps();
+      renderControls();
+      render();
+    }
+
+    function finishRun() {
+      if (state !== 'paused') return;
+      stopGps();
+      clearInterval(tickId);
+      tickId = null;
+      pendingRun = buildSavedRun();
+      state = 'saving';
+      els.saveSummary.textContent = `${formatKm(pendingRun.distanceM)} km · ${formatPace(pendingRun.avgPaceSec)} min/km · ${formatDuration(pendingRun.durationMs)}`;
+      els.runTitleInput.value = `Loopje ${new Date().toLocaleDateString('nl-NL')}`;
+      els.withDonnaInput.checked = false;
+      els.saveScreen.classList.add('open');
+    }
+
+    function startGps() {
+      stopGps();
+      const opts = { enableHighAccuracy: true, maximumAge: 0, timeout: 4500 };
+      watchId = navigator.geolocation.watchPosition(handlePosition, handleGpsError, opts);
+      pollId = setInterval(() => navigator.geolocation.getCurrentPosition(handlePosition, handleGpsError, opts), GPS_INTERVAL_MS);
+      updateGpsPill('GPS zoekt...', false);
+    }
+
+    function stopGps() {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (pollId !== null) clearInterval(pollId);
+      watchId = null;
+      pollId = null;
+    }
+
+    function handleGpsError(err) {
+      updateGpsPill(err.code === 1 ? 'GPS geen toegang' : 'GPS zwak', false);
+    }
+
+    function handlePosition(pos) {
+      if (state !== 'running') return;
+      const c = pos.coords;
+      if (!Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) return;
+      const accuracy = c.accuracy ?? 999;
+      updateGpsPill(`GPS ±${Math.round(accuracy)}m`, accuracy <= 20);
+      if (accuracy > MIN_ACCURACY_M && run.points.length > 0) return;
+
+      const nowMs = activeMs();
+      const point = {
+        lat: c.latitude,
+        lon: c.longitude,
+        t: nowMs,
+        wall: Date.now(),
+        accuracy,
+        cumulativeM: run.distanceM
+      };
+
+      if (run.lastPoint) {
+        const dt = Math.max(0.001, (nowMs - run.lastPoint.t) / 1000);
+        const d = haversine(run.lastPoint, point);
+        const speed = d / dt;
+        if (d >= 0.4 && speed <= MAX_REASONABLE_SPEED_MPS) {
+          run.distanceM += d;
+          point.cumulativeM = run.distanceM;
+          run.points.push(point);
+          updateKmMarks();
+        }
+      } else {
+        run.points.push(point);
+      }
+      run.lastPoint = point;
+      render();
+    }
+
+    function updateKmMarks() {
+      const nextKm = run.kmMarks.length;
+      const targetM = nextKm * 1000;
+      if (run.distanceM >= targetM) {
+        run.kmMarks.push({ km: nextKm, timeMs: activeMs(), distanceM: run.distanceM });
+      }
+    }
+
+    function getWindowStats(seconds) {
+      const pts = run.points;
+      if (pts.length < 2) return { distanceM: 0, timeMs: 0 };
+      const now = activeMs();
+      const cutoff = Math.max(0, now - seconds * 1000);
+      let first = pts[0];
+      for (let i = pts.length - 1; i >= 0; i--) {
+        if (pts[i].t <= cutoff) { first = pts[i]; break; }
+      }
+      const last = pts[pts.length - 1];
+      return { distanceM: Math.max(0, last.cumulativeM - first.cumulativeM), timeMs: Math.max(0, last.t - first.t) };
+    }
+
+    function getCurrentKmStats() {
+      const kmStartM = Math.floor(run.distanceM / 1000) * 1000;
+      let startPoint = run.points[0];
+      for (let i = run.points.length - 1; i >= 0; i--) {
+        if (run.points[i].cumulativeM <= kmStartM) { startPoint = run.points[i]; break; }
+      }
+      const last = run.points[run.points.length - 1];
+      if (!startPoint || !last) return { distanceM: 0, timeMs: 0 };
+      return { distanceM: Math.max(0, last.cumulativeM - Math.max(kmStartM, startPoint.cumulativeM)), timeMs: Math.max(0, last.t - startPoint.t) };
+    }
+
+    function minuteSplits(points = run.points) {
+      if (points.length < 2) return [];
+      const endMs = points[points.length - 1].t;
+      const count = Math.ceil(endMs / 60000);
+      const splits = [];
+      for (let i = 0; i < count; i++) {
+        const start = i * 60000;
+        const end = Math.min((i + 1) * 60000, endMs);
+        const a = interpolateAtTime(points, start);
+        const b = interpolateAtTime(points, end);
+        const d = Math.max(0, b.cumulativeM - a.cumulativeM);
+        splits.push({ label: `${i + 1}`, distanceM: d, timeMs: end - start, paceSec: paceFrom(d, end - start) });
+      }
+      return splits;
+    }
+
+    function kmSplits(points) {
+      if (points.length < 2) return [];
+      const totalM = points[points.length - 1].cumulativeM;
+      const splits = [];
+      for (let startM = 0; startM < totalM; startM += 1000) {
+        const endM = Math.min(startM + 1000, totalM);
+        const a = interpolateAtDistance(points, startM);
+        const b = interpolateAtDistance(points, endM);
+        const d = endM - startM;
+        splits.push({ label: `${Math.floor(startM / 1000) + 1}`, distanceM: d, timeMs: b.t - a.t, paceSec: paceFrom(d, b.t - a.t) });
+      }
+      return splits;
+    }
+
+    function fiveSecondSeries(points) {
+      if (points.length < 2) return [];
+      const endMs = points[points.length - 1].t;
+      const arr = [];
+      for (let t = 5000; t <= endMs; t += 5000) {
+        const a = interpolateAtTime(points, t - 5000);
+        const b = interpolateAtTime(points, t);
+        const d = Math.max(0, b.cumulativeM - a.cumulativeM);
+        arr.push({ tSec: t / 1000, paceSec: paceFrom(d, 5000) });
+      }
+      return arr;
+    }
+
+    function interpolateAtTime(points, t) {
+      if (t <= points[0].t) return { ...points[0], cumulativeM: points[0].cumulativeM };
+      const last = points[points.length - 1];
+      if (t >= last.t) return { ...last };
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        if (b.t >= t) {
+          const r = (t - a.t) / Math.max(1, b.t - a.t);
+          return {
+            lat: a.lat + (b.lat - a.lat) * r,
+            lon: a.lon + (b.lon - a.lon) * r,
+            t,
+            cumulativeM: a.cumulativeM + (b.cumulativeM - a.cumulativeM) * r
+          };
+        }
+      }
+      return { ...last };
+    }
+
+    function interpolateAtDistance(points, distanceM) {
+      if (distanceM <= points[0].cumulativeM) return { ...points[0] };
+      const last = points[points.length - 1];
+      if (distanceM >= last.cumulativeM) return { ...last };
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        if (b.cumulativeM >= distanceM) {
+          const r = (distanceM - a.cumulativeM) / Math.max(0.001, b.cumulativeM - a.cumulativeM);
+          return {
+            lat: a.lat + (b.lat - a.lat) * r,
+            lon: a.lon + (b.lon - a.lon) * r,
+            t: a.t + (b.t - a.t) * r,
+            cumulativeM: distanceM
+          };
+        }
+      }
+      return { ...last };
+    }
+
+    function fastestRollingKm(points) {
+      if (!points || points.length < 2 || points[points.length - 1].cumulativeM < 1000) return null;
+      let best = null;
+      const totalM = points[points.length - 1].cumulativeM;
+      for (let startM = 0; startM <= totalM - 1000; startM += 10) {
+        const a = interpolateAtDistance(points, startM);
+        const b = interpolateAtDistance(points, startM + 1000);
+        const timeMs = b.t - a.t;
+        const paceSec = paceFrom(1000, timeMs);
+        if (!best || paceSec < best.paceSec) best = { startM, endM: startM + 1000, timeMs, paceSec };
+      }
+      return best;
+    }
+
+    function projectedFinish(targetKm, avgPaceSec, kmPaceSec) {
+      const targetM = targetKm * 1000;
+      if (run.distanceM <= 0) return { avg: Infinity, km: Infinity };
+      return { avg: avgPaceSec * targetKm * 1000, km: kmPaceSec * targetKm * 1000 };
+    }
+
+    function render() {
+      const ms = activeMs();
+      const dist = run.distanceM;
+      const avgPace = paceFrom(dist, ms);
+      const kmStats = getCurrentKmStats();
+      const kmPace = paceFrom(kmStats.distanceM, kmStats.timeMs);
+      const w5 = getWindowStats(5);
+      const p5 = paceFrom(w5.distanceM, w5.timeMs);
+      const targetKm = currentTargetKm();
+      const projAvgMs = Number.isFinite(avgPace) ? avgPace * targetKm * 1000 : Infinity;
+      const projKmMs = Number.isFinite(kmPace) ? kmPace * targetKm * 1000 : Infinity;
+
+      els.distanceValue.textContent = formatKm(dist);
+      els.avgPaceValue.textContent = formatPace(avgPace);
+      els.kmPaceValue.textContent = formatPace(kmPace);
+      els.pace5Value.textContent = formatPace(p5);
+      els.timeValue.textContent = formatDuration(ms);
+      els.finishValue.textContent = `${formatDuration(projAvgMs)} / ${formatDuration(projKmMs)}`;
+      els.finishUnit.textContent = `doel ${targetKm.toFixed(2).replace('.', ',')} km · totaal / deze km`;
+      els.sampleText.textContent = `${run.points.length} gps-punten`;
+      els.stateText.textContent = state === 'running' ? 'Loop actief' : state === 'paused' ? 'Gepauzeerd' : state === 'saving' ? 'Opslaan' : 'Niet gestart';
+      drawBarChart(els.minuteChart, minuteSplits(), 'min', true);
+    }
+
+    function renderControls() {
+      els.controls.innerHTML = '';
+      if (state === 'idle') {
+        const btn = button('Start loop', 'btn', startRun);
+        els.controls.appendChild(btn);
+      } else if (state === 'running') {
+        const btn = button('Pauze', 'btn pause', pauseRun);
+        els.controls.appendChild(btn);
+      } else if (state === 'paused') {
+        els.controls.appendChild(button('Hervat', 'btn secondary', resumeRun));
+        els.controls.appendChild(button('Beëindig', 'btn danger', finishRun));
+      }
+    }
+
+    function button(text, cls, onClick) {
+      const b = document.createElement('button');
+      b.textContent = text;
+      b.className = cls;
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function buildSavedRun() {
+      const durationMs = activeMs();
+      const points = run.points.map(p => ({ lat: p.lat, lon: p.lon, t: Math.round(p.t), cumulativeM: p.cumulativeM, accuracy: p.accuracy }));
+      const avgPaceSec = paceFrom(run.distanceM, durationMs);
+      const fastest = fastestRollingKm(points);
+      return {
+        id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        title: '',
+        withDonna: false,
+        dateIso: new Date().toISOString(),
+        distanceM: run.distanceM,
+        durationMs,
+        avgPaceSec,
+        fastestKm: fastest,
+        points
+      };
+    }
+
+    function savePendingRun() {
+      if (!pendingRun) return;
+      const title = els.runTitleInput.value.trim();
+      if (!title) { alert('Vul eerst een titel in.'); return; }
+      pendingRun.title = title;
+      pendingRun.withDonna = els.withDonnaInput.checked;
+      const runs = loadRuns();
+      runs.unshift(pendingRun);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+      closeSaveAndReset();
+      renderHistory();
+    }
+
+    function discardPendingRun() {
+      if (confirm('Weet je zeker dat je deze run niet wilt opslaan?')) closeSaveAndReset();
+    }
+
+    function closeSaveAndReset() {
+      pendingRun = null;
+      els.saveScreen.classList.remove('open');
+      state = 'idle';
+      resetRun();
+      els.setupCard.classList.remove('hidden');
+      renderControls();
+      render();
+    }
+
+    function loadRuns() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+      catch { return []; }
+    }
+
+    function renderHistory() {
+      const runs = loadRuns();
+      els.historyList.innerHTML = '';
+      if (!runs.length) {
+        els.historyList.innerHTML = '<div class="empty">Nog geen opgeslagen runs. Start een loopje, pauzeer en beëindig hem om hem op te slaan.</div>';
+        return;
+      }
+      for (const r of runs) {
+        const item = document.createElement('button');
+        item.className = 'run-item';
+        const fastest = r.fastestKm ? formatPace(r.fastestKm.paceSec) : '--:--';
+        item.innerHTML = `
+          <div class="run-title">${escapeHtml(r.title)}${r.withDonna ? ' · met Donna' : ''}</div>
+          <div class="run-meta">
+            <div>Afstand: ${formatKm(r.distanceM)} km</div>
+            <div>Gem.: ${formatPace(r.avgPaceSec)} min/km</div>
+            <div>Snelste km: ${fastest} min/km</div>
+            <div>${new Date(r.dateIso).toLocaleDateString('nl-NL')}</div>
+          </div>`;
+        item.addEventListener('click', () => showDetails(r.id));
+        els.historyList.appendChild(item);
+      }
+    }
+
+    function showDetails(id) {
+      const r = loadRuns().find(x => x.id === id);
+      if (!r) return;
+      els.detailTitle.textContent = r.title;
+      els.detailSub.textContent = `${new Date(r.dateIso).toLocaleString('nl-NL')}${r.withDonna ? ' · met Donna' : ''}`;
+      els.detailDistance.textContent = formatKm(r.distanceM);
+      els.detailAvg.textContent = formatPace(r.avgPaceSec);
+      if (r.fastestKm) {
+        els.detailFastestKm.textContent = formatPace(r.fastestKm.paceSec);
+        els.detailFastestKmUnit.textContent = `${formatKm(r.fastestKm.startM)}–${formatKm(r.fastestKm.endM)} km · min/km`;
+      } else {
+        els.detailFastestKm.textContent = '--:--';
+        els.detailFastestKmUnit.textContent = 'nog geen volledige km';
+      }
+      els.detailScreen.classList.add('open');
+      setTimeout(() => {
+        drawBarChart(els.kmChart, kmSplits(r.points), 'km', true);
+        drawLineChart(els.velocityChart, fiveSecondSeries(r.points));
+        drawMap(r.points);
+      }, 50);
+    }
+
+    function closeDetails() {
+      els.detailScreen.classList.remove('open');
+    }
+
+    function drawBarChart(canvas, data, labelSuffix, invertPace) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(255,255,255,.04)';
+      ctx.fillRect(0, 0, w, h);
+      if (!data.length) {
+        ctx.fillStyle = '#9fb0c8'; ctx.font = '28px system-ui'; ctx.fillText('Nog geen data', 32, 70); return;
+      }
+      const pad = { l: 60, r: 24, t: 24, b: 62 };
+      const valid = data.filter(d => Number.isFinite(d.paceSec));
+      if (!valid.length) return;
+      const minP = Math.min(...valid.map(d => d.paceSec));
+      const maxP = Math.max(...valid.map(d => d.paceSec));
+      const spread = Math.max(20, maxP - minP);
+      const yMin = Math.max(120, minP - spread * .25);
+      const yMax = maxP + spread * .25;
+      const barW = (w - pad.l - pad.r) / data.length;
+
+      ctx.strokeStyle = 'rgba(255,255,255,.12)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, h - pad.b); ctx.lineTo(w - pad.r, h - pad.b); ctx.stroke();
+
+      data.forEach((d, i) => {
+        const x = pad.l + i * barW + 7;
+        const pace = Number.isFinite(d.paceSec) ? d.paceSec : yMax;
+        const y = pad.t + ((pace - yMin) / (yMax - yMin)) * (h - pad.t - pad.b);
+        const barH = h - pad.b - y;
+        const grad = ctx.createLinearGradient(0, y, 0, h - pad.b);
+        grad.addColorStop(0, '#45d483'); grad.addColorStop(1, '#60a5fa');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, y, Math.max(5, barW - 14), barH);
+        ctx.fillStyle = '#f7fafc'; ctx.font = '22px system-ui'; ctx.textAlign = 'center';
+        ctx.save(); ctx.translate(x + Math.max(5, barW - 14) / 2, Math.max(42, y - 8)); ctx.rotate(-Math.PI / 8); ctx.fillText(formatPace(d.paceSec), 0, 0); ctx.restore();
+        ctx.fillStyle = '#9fb0c8'; ctx.font = '20px system-ui'; ctx.fillText(`${d.label}${labelSuffix}`, x + Math.max(5, barW - 14) / 2, h - 22);
+      });
+      ctx.textAlign = 'left'; ctx.fillStyle = '#9fb0c8'; ctx.font = '20px system-ui'; ctx.fillText('tempo min/km', 18, 24);
+    }
+
+    function drawLineChart(canvas, data) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(255,255,255,.04)'; ctx.fillRect(0, 0, w, h);
+      const valid = data.filter(d => Number.isFinite(d.paceSec));
+      if (valid.length < 2) { ctx.fillStyle = '#9fb0c8'; ctx.font = '28px system-ui'; ctx.fillText('Nog geen 5-sec data', 32, 70); return; }
+      const pad = { l: 62, r: 26, t: 26, b: 58 };
+      const maxT = Math.max(...valid.map(d => d.tSec));
+      const minP = Math.min(...valid.map(d => d.paceSec));
+      const maxP = Math.max(...valid.map(d => d.paceSec));
+      const spread = Math.max(20, maxP - minP);
+      const yMin = Math.max(120, minP - spread * .25);
+      const yMax = maxP + spread * .25;
+      const xFor = t => pad.l + (t / maxT) * (w - pad.l - pad.r);
+      const yFor = p => pad.t + ((p - yMin) / (yMax - yMin)) * (h - pad.t - pad.b);
+
+      ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, h - pad.b); ctx.lineTo(w - pad.r, h - pad.b); ctx.stroke();
+      ctx.strokeStyle = '#45d483'; ctx.lineWidth = 5; ctx.beginPath();
+      valid.forEach((d, i) => { const x = xFor(d.tSec), y = yFor(d.paceSec); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+      ctx.stroke();
+      ctx.fillStyle = '#9fb0c8'; ctx.font = '20px system-ui'; ctx.fillText('tijd', w - 76, h - 20); ctx.fillText('tempo', 12, 24);
+    }
+
+    function drawMap(points) {
+      const mapEl = document.getElementById('map');
+      if (typeof L === 'undefined') { mapEl.innerHTML = '<div class="empty">Kaartbibliotheek kon niet laden.</div>'; return; }
+      if (map) { map.remove(); map = null; routeLine = null; }
+      map = L.map('map', { zoomControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+      const latLngs = points.map(p => [p.lat, p.lon]);
+      if (!latLngs.length) { map.setView([52.07, 4.3], 12); return; }
+      routeLine = L.polyline(latLngs, { color: '#45d483', weight: 5 }).addTo(map);
+      map.fitBounds(routeLine.getBounds(), { padding: [24, 24] });
+      L.marker(latLngs[0]).addTo(map).bindPopup('Start');
+      L.marker(latLngs[latLngs.length - 1]).addTo(map).bindPopup('Finish');
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
+    }
+
+    let touchStartX = null, touchStartY = null;
+    document.addEventListener('touchstart', e => {
+      if (els.saveScreen.classList.contains('open') || els.detailScreen.classList.contains('open')) return;
+      touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      if (touchStartX === null) return;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      const dy = e.changedTouches[0].clientY - touchStartY;
+      touchStartX = null; touchStartY = null;
+      if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      if (dx < 0 && state !== 'running') { els.app.classList.add('history-open'); renderHistory(); }
+      if (dx > 0) els.app.classList.remove('history-open');
+    }, { passive: true });
+
+    els.backToRunBtn.addEventListener('click', () => els.app.classList.remove('history-open'));
+    els.saveRunBtn.addEventListener('click', savePendingRun);
+    els.discardRunBtn.addEventListener('click', discardPendingRun);
+    els.closeDetailBtn.addEventListener('click', closeDetails);
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
+    }
+
+    renderControls();
+    renderHistory();
+    render();
+  </script>
+</body>
+</html>

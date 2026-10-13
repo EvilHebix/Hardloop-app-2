@@ -1,0 +1,19 @@
+{
+  "name": "RunTracker",
+  "short_name": "RunTracker",
+  "description": "GPS hardlooptracker met afstand, tempo, splits en opgeslagen runs.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#101827",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
