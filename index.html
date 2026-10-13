@@ -189,7 +189,28 @@
       background: rgba(255,255,255,.06);
       padding: 14px;
     }
-    .run-title { font-weight: 900; font-size: 16px; margin-bottom: 8px; }
+    .run-item.with-donna {
+      border: 2px solid #ff8fcb;
+      box-shadow: 0 0 0 1px rgba(255,143,203,.18), 0 14px 36px rgba(255,143,203,.10);
+    }
+    .run-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .run-title { font-weight: 900; font-size: 16px; }
+    .delete-run-btn {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(251,113,133,.14);
+      border: 1px solid rgba(251,113,133,.45);
+      color: #fecdd3;
+      font-size: 12px;
+      font-weight: 900;
+    }
     .run-meta {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -921,11 +942,14 @@
         return;
       }
       for (const r of runs) {
-        const item = document.createElement('button');
-        item.className = 'run-item';
+        const item = document.createElement('div');
+        item.className = `run-item${r.withDonna ? ' with-donna' : ''}`;
         const fastest = r.fastestKm ? formatPace(r.fastestKm.paceSec) : '--:--';
         item.innerHTML = `
-          <div class="run-title">${escapeHtml(r.title)}${r.withDonna ? ' · met Donna' : ''}</div>
+          <div class="run-card-header">
+            <div class="run-title">${escapeHtml(r.title)}${r.withDonna ? ' · met Donna' : ''}</div>
+            <button class="delete-run-btn" type="button" aria-label="Verwijder ${escapeHtml(r.title)}">Verwijder</button>
+          </div>
           <div class="run-meta">
             <div>Afstand: ${formatKm(r.distanceM)} km</div>
             <div>Gem.: ${formatPace(r.avgPaceSec)} min/km</div>
@@ -933,8 +957,19 @@
             <div>${new Date(r.dateIso).toLocaleDateString('nl-NL')}</div>
           </div>`;
         item.addEventListener('click', () => showDetails(r.id));
+        item.querySelector('.delete-run-btn').addEventListener('click', event => {
+          event.stopPropagation();
+          deleteRun(r.id, r.title);
+        });
         els.historyList.appendChild(item);
       }
+    }
+
+    function deleteRun(id, title) {
+      if (!confirm(`Weet je zeker dat je "${title}" wilt verwijderen?`)) return;
+      const runs = loadRuns().filter(r => r.id !== id);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+      renderHistory();
     }
 
     function showDetails(id) {
