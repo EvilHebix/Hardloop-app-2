@@ -393,16 +393,16 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
     const STORAGE_KEY = 'runtracker_runs_v1';
-    const GPS_INTERVAL_MS = 400;
+    const GPS_INTERVAL_MS = 500;
     const MAX_REASONABLE_SPEED_MPS = 8.5; // 2:00 min/km; filtert extreme GPS-sprongen.
-    const MAX_ACCURACY_M = 30; // Punten slechter dan dit worden genegeerd zodra er al een GPS-fix is.
-    const MIN_SAMPLE_INTERVAL_MS = 350; // Voorkomt dubbele callbacks van watchPosition + polling.
-    const GPS_SMOOTHING_SECONDS = 3.2; // Hoe hoger, hoe minder zigzag/arm- en GPS-ruis meetelt.
-    const MIN_MOVEMENT_M = 1.15; // Kleinere bewegingen worden gezien als ruis, niet als afgelegde afstand.
-    const MOVING_WINDOW_SECONDS = 4.5; // Eerst over een paar seconden bevestigen dat je echt verplaatst.
-    const MIN_RUNNING_SPEED_MPS = 1.55; // Langzamer dan ±10:45 min/km telt als stilstand/ruis voor hardlopen.
-    const MIN_NET_DISPLACEMENT_M = 5.0; // Minimaal netto verplaatsen voordat afstand wordt meegeteld.
-    const STATIONARY_GPS_SPEED_MPS = 0.85; // Als iOS zelf bijna 0 m/s meldt, tellen we GPS-wobble niet mee.
+    const MAX_ACCURACY_M = 35; // Punten slechter dan dit worden genegeerd zodra er al een GPS-fix is.
+    const MIN_SAMPLE_INTERVAL_MS = 450; // Voorkomt dubbele callbacks van watchPosition + polling.
+    const GPS_SMOOTHING_SECONDS = 1.6; // Lager = reageert sneller op echte beweging, nog steeds smoothing tegen zigzag.
+    const MIN_MOVEMENT_M = 0.55; // Kleinere bewegingen worden gezien als ruis, niet als afgelegde afstand.
+    const MOVING_WINDOW_SECONDS = 3.0; // Eerst kort bevestigen dat je echt verplaatst.
+    const MIN_RUNNING_SPEED_MPS = 0.95; // Beweging langzamer dan ±17:30 min/km telt meestal als stilstand/ruis.
+    const MIN_NET_DISPLACEMENT_M = 2.8; // Minimaal netto verplaatsen voordat afstand wordt meegeteld.
+    const STATIONARY_GPS_SPEED_MPS = 0.45; // Alleen bij bijna 0 m/s extra streng tegen GPS-wobble.
 
     const els = {
       app: document.getElementById('app'), gpsPill: document.getElementById('gpsPill'), setupCard: document.getElementById('setupCard'),
@@ -650,22 +650,24 @@
         const dt = Math.max(0.001, (nowMs - run.lastPoint.t) / 1000);
         const d = haversine(run.lastPoint, point);
         const speed = d / dt;
-        const dynamicNoiseM = Math.max(MIN_MOVEMENT_M, Math.min(3.0, accuracy * 0.16));
+        const movement = movementConfidence(rawPoint);
+        const dynamicNoiseM = Math.max(MIN_MOVEMENT_M, Math.min(1.8, accuracy * 0.08));
 
         if (speed > MAX_REASONABLE_SPEED_MPS) {
           run.rejectedSamples += 1;
-        } else if (!isMovementConfirmed(rawPoint)) {
-          // Telefoon/GPS beweegt binnen de foutcirkel: niet optellen als afgelegde hardloopafstand.
-          run.pendingDistanceM = 0;
-        } else if (d >= dynamicNoiseM) {
-          const distanceCorrection = distanceReliabilityFactor(accuracy, d, rawPoint);
+        } else if (movement.confirmed && d >= dynamicNoiseM) {
+          const distanceCorrection = distanceReliabilityFactor(accuracy, d, rawPoint, movement.confidence);
           const correctedD = d * distanceCorrection;
-          if (correctedD >= MIN_MOVEMENT_M * 0.55) {
+          if (correctedD >= MIN_MOVEMENT_M * 0.35) {
             run.distanceM += correctedD;
             point.cumulativeM = run.distanceM;
             run.points.push(point);
             updateKmMarks();
           }
+        } else if (movement.possiblyMoving) {
+          // Bij het begin van echte beweging of heel korte segmenten bewaren we het laatste punt wel,
+          // zodat de app niet volledig blijft hangen op 0,00 km.
+          run.points.push({ ...point, cumulativeM: run.distanceM });
         }
 
         run.lastPoint = { ...point, cumulativeM: run.distanceM };
@@ -687,15 +689,14 @@
       const rawSpeed = rawJumpM / dt;
 
       // Extreem onwaarschijnlijke sprongen zijn GPS-ruis en worden niet meegenomen.
-      if (rawSpeed > MAX_REASONABLE_SPEED_MPS * 1.6 && rawJumpM > Math.max(12, rawPoint.accuracy * 1.6)) {
+      if (rawSpeed > MAX_REASONABLE_SPEED_MPS * 1.8 && rawJumpM > Math.max(18, rawPoint.accuracy * 2.0)) {
         return null;
       }
 
-      // Adaptieve low-pass filter: bij slechter GPS-signaal krijgt een nieuw punt minder gewicht.
-      // Hierdoor telt zigzag door armbeweging en GPS-wobble veel minder mee als echte afstand.
-      const accuracyPenalty = Math.min(0.75, Math.max(0, (rawPoint.accuracy - 5) / 40));
+      // Adaptieve low-pass filter: genoeg smoothing tegen wobble, maar niet zo traag dat 70m verdwijnt.
+      const accuracyPenalty = Math.min(0.55, Math.max(0, (rawPoint.accuracy - 6) / 55));
       const alphaBase = 1 - Math.exp(-dt / GPS_SMOOTHING_SECONDS);
-      const alpha = Math.max(0.08, Math.min(0.55, alphaBase * (1 - accuracyPenalty)));
+      const alpha = Math.max(0.18, Math.min(0.75, alphaBase * (1 - accuracyPenalty)));
 
       run.smoothedPoint = {
         lat: run.smoothedPoint.lat + (rawPoint.lat - run.smoothedPoint.lat) * alpha,
@@ -714,38 +715,49 @@
       }
     }
 
-    function isMovementConfirmed(rawPoint) {
-      if (run.acceptedRawPoints.length < 3) return false;
+    function movementConfidence(rawPoint) {
+      if (run.acceptedRawPoints.length < 2) return { confirmed: false, possiblyMoving: false, confidence: 0 };
       const first = run.acceptedRawPoints[0];
       const spanSec = Math.max(0.001, (rawPoint.t - first.t) / 1000);
       const netM = haversine(first, rawPoint);
       const netSpeed = netM / spanSec;
       const avgAccuracy = run.acceptedRawPoints.reduce((sum, p) => sum + (p.accuracy || 999), 0) / run.acceptedRawPoints.length;
-      const minNetM = Math.max(MIN_NET_DISPLACEMENT_M, Math.min(10, avgAccuracy * 0.70));
+      const minNetM = Math.max(MIN_NET_DISPLACEMENT_M, Math.min(5.5, avgAccuracy * 0.38));
+      const gpsSpeed = rawPoint.gpsSpeed;
+      const gpsSaysMoving = gpsSpeed !== null && gpsSpeed >= STATIONARY_GPS_SPEED_MPS;
+      const netSaysMoving = netM >= minNetM && netSpeed >= MIN_RUNNING_SPEED_MPS;
+      const possiblyMoving = gpsSaysMoving || netM >= minNetM * 0.55 || netSpeed >= 0.65;
 
-      // Als iOS zelf een heel lage snelheid meldt én we hebben geen duidelijke netto verplaatsing,
-      // dan is dit vrijwel zeker GPS-drift terwijl je stilstaat.
-      if (rawPoint.gpsSpeed !== null && rawPoint.gpsSpeed < STATIONARY_GPS_SPEED_MPS && netM < minNetM * 1.35) return false;
+      // Als iOS vrijwel 0 m/s meldt én er is nauwelijks netto verplaatsing, dan is het drift.
+      if (gpsSpeed !== null && gpsSpeed < STATIONARY_GPS_SPEED_MPS && netM < minNetM * 0.90) {
+        return { confirmed: false, possiblyMoving: false, confidence: 0 };
+      }
 
-      // Hardlopen vereist consistente netto verplaatsing, niet alleen kleine rondjes binnen de GPS-foutcirkel.
-      return netM >= minNetM && netSpeed >= MIN_RUNNING_SPEED_MPS;
+      const netScore = Math.max(0, Math.min(1, (netM - minNetM * 0.55) / Math.max(1, minNetM * 0.75)));
+      const speedScore = Math.max(0, Math.min(1, (netSpeed - 0.55) / 1.4));
+      const gpsScore = gpsSpeed === null ? 0.55 : Math.max(0, Math.min(1, (gpsSpeed - 0.35) / 2.2));
+      const confidence = Math.max(0, Math.min(1, netScore * 0.50 + speedScore * 0.30 + gpsScore * 0.20));
+
+      return { confirmed: netSaysMoving || (gpsSaysMoving && netM >= minNetM * 0.75), possiblyMoving, confidence };
     }
 
-    function distanceReliabilityFactor(accuracy, segmentM, rawPoint) {
-      // GPS met ±7m kan korte segmenten sterk overschatten. Deze factor dempt vooral korte
-      // segmenten bij matige nauwkeurigheid, maar laat langere consistente beweging grotendeels staan.
+    function distanceReliabilityFactor(accuracy, segmentM, rawPoint, confidence = 1) {
+      // GPS met ±7m kan korte segmenten overschatten. We dempen korte segmenten, maar blokkeren
+      // echte verplaatsing niet meer volledig zoals in v4 gebeurde.
       const noiseRatio = accuracy / Math.max(segmentM, 1);
       let factor = 1;
       if (accuracy > 6) {
-        if (noiseRatio >= 8) factor = 0.10;
-        else if (noiseRatio >= 4) factor = 0.25;
-        else if (noiseRatio >= 2) factor = 0.50;
-        else factor = Math.max(0.72, Math.min(1, 1 - (accuracy - 6) / 90));
+        if (noiseRatio >= 10) factor = 0.45;
+        else if (noiseRatio >= 6) factor = 0.58;
+        else if (noiseRatio >= 3) factor = 0.72;
+        else factor = Math.max(0.82, Math.min(1, 1 - (accuracy - 6) / 140));
       }
 
-      if (rawPoint.gpsSpeed !== null) {
-        const gpsPaceFactor = Math.max(0.65, Math.min(1.10, rawPoint.gpsSpeed / Math.max(MIN_RUNNING_SPEED_MPS, rawPoint.gpsSpeed + 0.35)));
-        factor *= gpsPaceFactor;
+      const confidenceFactor = 0.72 + Math.max(0, Math.min(1, confidence)) * 0.28;
+      factor *= confidenceFactor;
+
+      if (rawPoint.gpsSpeed !== null && rawPoint.gpsSpeed < STATIONARY_GPS_SPEED_MPS) {
+        factor *= 0.55;
       }
       return Math.max(0, Math.min(1, factor));
     }
